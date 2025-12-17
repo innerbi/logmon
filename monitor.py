@@ -100,13 +100,13 @@ class LogMonitor:
 
     def _handle_special_key(self, key: bytes) -> bool:
         """Handle special keys (arrows). Returns False to quit."""
-        # Windows special key codes
-        page_size = max(5, (self.console.height or 30) // 3)
+        # Scroll 6 lines at a time
+        scroll_lines = 6
 
         if key == b'H':  # Up arrow
-            self.display.scroll_up(page_size)
+            self.display.scroll_up(scroll_lines)
         elif key == b'P':  # Down arrow
-            self.display.scroll_down(page_size)
+            self.display.scroll_down(scroll_lines)
         elif key == b'O':  # End key - jump to latest
             self.display.scroll_to_bottom()
         elif key == b'G':  # Home key - jump to oldest
