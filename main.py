@@ -172,6 +172,8 @@ Requirements:
         sources.append(LogSource(name="backend", color="cyan"))
     if not args.backend_only:
         sources.append(LogSource(name="batch", color="yellow"))
+    # Always include ray logs for distributed task monitoring
+    sources.append(LogSource(name="ray", color="magenta"))
 
     if not sources:
         print("Error: At least one log source must be enabled")
