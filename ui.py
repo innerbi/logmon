@@ -238,8 +238,8 @@ class LogDisplay:
             Layout(name="footer", size=3, minimum_size=3),
         )
 
-        # Body height fixed at height - 10
-        body_height = max(5, height - 10)
+        # Body height: total - header(5) - footer(3) - panel borders(2)
+        body_height = max(5, height - 12)
 
         layout["header"].update(self.render_header())
         layout["body"].update(self.render_logs(height=body_height))
