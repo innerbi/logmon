@@ -8,6 +8,7 @@ from rich.style import Style
 from typing import List, Dict, Optional
 from collections import deque
 from dataclasses import dataclass, field
+import threading
 
 try:
     from .tail import LogLine
@@ -56,33 +57,52 @@ class LogDisplay:
     scroll_offset: int = 0  # 0 = latest, >0 = scrolled back
     _cache_valid: bool = False
     _cached_filtered: List = field(default_factory=list)
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _cache_version: int = 0  # Incremented on invalidation to detect stale rebuilds
 
     def __post_init__(self):
         self.lines = deque(maxlen=self.max_lines)
         self._cache_valid = False
         self._cached_filtered = []
+        self._lock = threading.Lock()
+        self._cache_version = 0
 
     def _invalidate_cache(self):
         """Invalidate filtered lines cache."""
-        self._cache_valid = False
+        with self._lock:
+            self._cache_valid = False
+            self._cache_version += 1
 
     def add_line(self, line: LogLine):
         """Add a new log line."""
-        # No agregar si esta pausado o scrolleado (para que quede quieto)
-        if not self.paused and self.scroll_offset == 0:
-            self.lines.append(line)
-            self._invalidate_cache()
+        if self.paused:
+            return
 
-            # Update stats
-            if line.source not in self.stats:
-                self.stats[line.source] = {}
-            level = line.level.upper()
-            self.stats[line.source][level] = self.stats[line.source].get(level, 0) + 1
+        # Always add to buffer (never lose logs)
+        self.lines.append(line)
+        self._invalidate_cache()
+
+        # Update stats
+        if line.source not in self.stats:
+            self.stats[line.source] = {}
+        level = line.level.upper()
+        self.stats[line.source][level] = self.stats[line.source].get(level, 0) + 1
+
+        # If scrolled, increment offset to keep view stable (don't auto-scroll)
+        if self.scroll_offset > 0:
+            self.scroll_offset += 1
 
     def _rebuild_cache(self):
         """Rebuild the filtered lines cache."""
-        self._cached_filtered = []
-        for line in self.lines:
+        # Capture version at start to detect invalidation during rebuild
+        with self._lock:
+            version_at_start = self._cache_version
+
+        new_filtered = []
+        # Take a snapshot of lines to avoid issues with concurrent modification
+        lines_snapshot = list(self.lines)
+
+        for line in lines_snapshot:
             # Apply filters
             if self.filters.level and line.level.upper() != self.filters.level.upper():
                 continue
@@ -90,16 +110,29 @@ class LogDisplay:
                 continue
             if self.filters.search and self.filters.search.lower() not in line.raw.lower():
                 continue
-            self._cached_filtered.append(line)
-        self._cache_valid = True
+            new_filtered.append(line)
+
+        # Only mark as valid if no invalidation occurred during rebuild
+        with self._lock:
+            if self._cache_version == version_at_start:
+                self._cached_filtered = new_filtered
+                self._cache_valid = True
+            # else: cache was invalidated during rebuild, don't update
 
     def get_filtered_lines(self, limit: int = 50) -> List[LogLine]:
         """Get filtered lines for display (uses cache for performance)."""
-        # Rebuild cache if invalid
-        if not self._cache_valid:
+        # Check cache validity and rebuild if needed
+        with self._lock:
+            cache_valid = self._cache_valid
+
+        if not cache_valid:
             self._rebuild_cache()
 
-        total = len(self._cached_filtered)
+        # Take a snapshot of the filtered cache
+        with self._lock:
+            filtered_snapshot = list(self._cached_filtered)
+
+        total = len(filtered_snapshot)
         if total == 0:
             return []
 
@@ -110,14 +143,20 @@ class LogDisplay:
         # Get the window of lines
         end_idx = total - effective_offset
         start_idx = max(0, end_idx - limit)
-        return self._cached_filtered[start_idx:end_idx]
+        return filtered_snapshot[start_idx:end_idx]
 
     def clamp_scroll(self, visible_lines: int = 50):
         """Clamp scroll offset to valid range. Call this before render."""
-        # Use cache for fast count
-        if not self._cache_valid:
+        # Check cache validity
+        with self._lock:
+            cache_valid = self._cache_valid
+
+        if not cache_valid:
             self._rebuild_cache()
-        total = len(self._cached_filtered)
+
+        with self._lock:
+            total = len(self._cached_filtered)
+
         max_offset = max(0, total - visible_lines)
         self.scroll_offset = min(self.scroll_offset, max_offset)
 
@@ -249,9 +288,12 @@ class LogDisplay:
 
     def clear(self):
         """Clear all logs and stats."""
-        self.lines.clear()
-        self.stats.clear()
-        self._invalidate_cache()
+        with self._lock:
+            self.lines.clear()
+            self.stats.clear()
+            self._cache_valid = False
+            self._cache_version += 1
+            self._cached_filtered = []
 
     def set_level_filter(self, level: Optional[str]):
         """Set level filter."""
