@@ -88,9 +88,8 @@ class LogDisplay:
         level = line.level.upper()
         self.stats[line.source][level] = self.stats[line.source].get(level, 0) + 1
 
-        # If scrolled, increment offset to keep view stable (don't auto-scroll)
-        if self.scroll_offset > 0:
-            self.scroll_offset += 1
+        # If scrolled, DO NOT increment offset - freeze the view
+        # New logs accumulate in buffer but are not shown until scroll_to_bottom()
 
     def _rebuild_cache(self):
         """Rebuild the filtered lines cache."""
@@ -175,11 +174,11 @@ class LogDisplay:
 
         # Status
         if self.connection_error:
-            status = "[red]DISCONNECTED (reconnecting...)[/]"
+            status = "[red]DISCONNECTED - Press [X] to reconnect[/]"
         elif self.paused:
             status = "[yellow]PAUSED[/]"
         elif self.scroll_offset > 0:
-            status = f"[cyan]SCROLLED (+{self.scroll_offset})[/]"
+            status = f"[cyan]VIEW FROZEN (buffering) - Press End for latest[/]"
         else:
             status = "[green]LIVE[/]"
         table.add_row("Status:", status)

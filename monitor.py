@@ -193,19 +193,12 @@ class LogMonitor:
                 refresh_per_second=int(1 / self.config.refresh_rate),
                 screen=True
             ) as live:
-                reconnect_cooldown = 0
                 while self.running:
-                    # Check if subscriber is still running and auto-reconnect
+                    # Check if subscriber is still running
                     if not self.subscriber.is_running:
                         self.display.connection_error = True
-                        # Auto-reconnect every 5 minutes
-                        reconnect_cooldown -= 1
-                        if reconnect_cooldown <= 0:
-                            self._reconnect()
-                            reconnect_cooldown = 600  # 5 minutes at 0.5s refresh
                     else:
                         self.display.connection_error = False
-                        reconnect_cooldown = 0
 
                     # Poll for new logs
                     self._poll_logs()
