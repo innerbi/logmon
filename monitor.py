@@ -182,12 +182,13 @@ class LogMonitor:
         # Start Redis subscription
         self.subscriber.start()
 
-        # Get terminal height for display
+        # Get terminal dimensions for display
         height = self.console.height or 30
+        width = self.console.width or 120
 
         try:
             with Live(
-                self.display.render(height=height),
+                self.display.render(height=height, width=width),
                 console=self.console,
                 refresh_per_second=int(1 / self.config.refresh_rate),
                 screen=True
@@ -216,10 +217,11 @@ class LogMonitor:
 
                     # Update display
                     height = self.console.height or 30
+                    width = self.console.width or 120
                     # Clamp scroll before render to avoid stale offsets
                     # body = height - 10
                     self.display.clamp_scroll(visible_lines=height - 10)
-                    live.update(self.display.render(height=height))
+                    live.update(self.display.render(height=height, width=width))
 
                     # Small sleep
                     time.sleep(self.config.refresh_rate)
