@@ -94,10 +94,6 @@ class LogDisplay:
 
     def _rebuild_cache(self):
         """Rebuild the filtered lines cache."""
-        # Capture version at start to detect invalidation during rebuild
-        with self._lock:
-            version_at_start = self._cache_version
-
         new_filtered = []
         # Take a snapshot of lines to avoid issues with concurrent modification
         lines_snapshot = list(self.lines)
@@ -112,12 +108,11 @@ class LogDisplay:
                 continue
             new_filtered.append(line)
 
-        # Only mark as valid if no invalidation occurred during rebuild
+        # Always update cache with latest snapshot
+        # Even if invalidated during rebuild, this data is still fresher than before
         with self._lock:
-            if self._cache_version == version_at_start:
-                self._cached_filtered = new_filtered
-                self._cache_valid = True
-            # else: cache was invalidated during rebuild, don't update
+            self._cached_filtered = new_filtered
+            self._cache_valid = True
 
     def get_filtered_lines(self, limit: int = 50) -> List[LogLine]:
         """Get filtered lines for display (uses cache for performance)."""
