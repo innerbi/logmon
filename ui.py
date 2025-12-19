@@ -174,7 +174,7 @@ class LogDisplay:
 
         # Status
         if self.connection_error:
-            status = "[red]DISCONNECTED[/]"
+            status = "[red]DISCONNECTED[/] [dim][[/][yellow]X[/][dim]] Reconnect[/]"
         elif self.paused:
             status = "[yellow]PAUSED[/]"
         elif self.scroll_offset > 0:
@@ -313,8 +313,8 @@ class LogDisplay:
             Layout(name="footer", size=3, minimum_size=3),
         )
 
-        # Body height: total - header(5) - footer(3) - panel borders(2)
-        body_height = max(5, height - 12)
+        # Body height: total - header(5) - footer(3) - panel borders(4) - padding
+        body_height = max(5, height - 14)
 
         layout["header"].update(self.render_header())
         layout["body"].update(self.render_logs(height=body_height, width=width))

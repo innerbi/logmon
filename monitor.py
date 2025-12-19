@@ -146,6 +146,8 @@ class LogMonitor:
             self.display.set_level_filter(None)
         elif key_lower == 'l':
             self._copy_logs_to_clipboard()
+        elif key_lower == 'x':
+            self._reconnect()
 
         return True
 
@@ -209,8 +211,7 @@ class LogMonitor:
                     height = self.console.height or 30
                     width = self.console.width or 120
                     # Clamp scroll before render to avoid stale offsets
-                    # body = height - 10
-                    self.display.clamp_scroll(visible_lines=height - 10)
+                    self.display.clamp_scroll(visible_lines=height - 14)
                     live.update(self.display.render(height=height, width=width))
 
                     # Small sleep
