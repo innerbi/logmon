@@ -174,7 +174,7 @@ class LogDisplay:
 
         # Status
         if self.connection_error:
-            status = "[red]DISCONNECTED - Press [X] to reconnect[/]"
+            status = "[red]DISCONNECTED[/]"
         elif self.paused:
             status = "[yellow]PAUSED[/]"
         elif self.scroll_offset > 0:
@@ -294,7 +294,6 @@ class LogDisplay:
             "[P]ause",
             "[C]lear",
             "[L]ogs:Copy",
-            "[X]Reconnect",
             "[1-5]Level",
             "[B]ack/[W]ork/[R]ay",
             "[A]ll",

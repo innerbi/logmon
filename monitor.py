@@ -146,9 +146,6 @@ class LogMonitor:
             self.display.set_level_filter(None)
         elif key_lower == 'l':
             self._copy_logs_to_clipboard()
-        elif key_lower == 'x':
-            # Manual reconnect
-            self._reconnect()
 
         return True
 
