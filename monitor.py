@@ -1,6 +1,9 @@
 """Main monitor class that coordinates Redis subscription and display."""
 import time
 import sys
+import subprocess
+import redis
+from urllib.parse import urlparse
 from rich.console import Console
 from rich.live import Live
 
@@ -30,6 +33,67 @@ class LogMonitor:
         )
         self.subscriber: RedisLogSubscriber = None
         self.running = False
+        self._port_forward_proc = None
+
+    def _try_redis_connection(self) -> bool:
+        """Try to connect to Redis. Returns True if successful."""
+        try:
+            parsed = urlparse(self.config.redis_url)
+            host = parsed.hostname or 'localhost'
+            if host == 'localhost':
+                host = '127.0.0.1'
+            client = redis.Redis(
+                host=host,
+                port=parsed.port or 6379,
+                db=int(parsed.path.lstrip('/') or 0),
+                decode_responses=True,
+                protocol=2,
+                socket_timeout=3
+            )
+            client.ping()
+            return True
+        except Exception:
+            return False
+
+    def _cleanup_port_forward(self):
+        """Cleanup port-forward process."""
+        if self._port_forward_proc:
+            try:
+                self._port_forward_proc.terminate()
+                self._port_forward_proc.wait(timeout=2)
+            except Exception:
+                try:
+                    self._port_forward_proc.kill()
+                except Exception:
+                    pass
+            self._port_forward_proc = None
+
+    def _start_port_forward(self) -> bool:
+        """Start kubectl port-forward in background. Returns True if successful."""
+        if not self.config.port_forward or not self.config.port_forward.enabled:
+            return False
+
+        pf = self.config.port_forward
+        try:
+            # Start port-forward
+            self._port_forward_proc = subprocess.Popen(
+                ["kubectl", "port-forward", f"svc/{pf.service}", f"{pf.port}:{pf.port}", "-n", pf.namespace],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            )
+
+            # Wait a moment for connection
+            time.sleep(2)
+
+            # Check if still running
+            if self._port_forward_proc.poll() is not None:
+                return False
+
+            return True
+
+        except Exception:
+            return False
 
     def _setup_subscriber(self):
         """Create Redis subscriber for enabled sources."""
@@ -37,19 +101,32 @@ class LogMonitor:
         self.subscriber = RedisLogSubscriber(self.config.redis_url, channels)
 
     def _reconnect(self):
-        """Attempt to reconnect to Redis."""
+        """Attempt to reconnect to Redis, including port-forward if needed."""
         try:
+            # Stop existing subscriber
             if self.subscriber:
                 self.subscriber.stop()
-                # Give time for thread to terminate
-                import time
                 time.sleep(0.5)
+
+            # Check if Redis is reachable
+            if not self._try_redis_connection():
+                # Redis not reachable, try to restart port-forward
+                if self.config.port_forward and self.config.port_forward.enabled:
+                    self._cleanup_port_forward()
+                    if self._start_port_forward():
+                        time.sleep(1)
+                        if not self._try_redis_connection():
+                            return  # Still can't connect
+                    else:
+                        return  # Failed to start port-forward
+                else:
+                    return  # No port-forward config and Redis not reachable
+
+            # Redis is reachable, setup subscriber
             self._setup_subscriber()
             self.subscriber.start()
-            # Wait a bit to check if connection succeeded
             time.sleep(0.5)
-        except Exception as e:
-            # Log error but continue
+        except Exception:
             pass
 
     def _poll_logs(self):
@@ -176,6 +253,20 @@ class LogMonitor:
     def run(self):
         """Run the monitor (blocking)."""
         self.running = True
+
+        # Ensure Redis connection (start port-forward if needed)
+        if not self._try_redis_connection():
+            if self.config.port_forward and self.config.port_forward.enabled:
+                if not self._start_port_forward():
+                    self.console.print("[red]Failed to start port-forward[/]")
+                    return
+                if not self._try_redis_connection():
+                    self.console.print("[red]Cannot connect to Redis after port-forward[/]")
+                    return
+            else:
+                self.console.print("[red]Cannot connect to Redis[/]")
+                return
+
         self._setup_subscriber()
 
         # Start Redis subscription
@@ -230,4 +321,6 @@ class LogMonitor:
                     self.subscriber.stop()
             except Exception:
                 pass  # Ignore cleanup errors
+            # Cleanup port-forward
+            self._cleanup_port_forward()
             self.console.print("[dim]Monitor stopped.[/]")

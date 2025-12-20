@@ -1,6 +1,6 @@
 """Configuration for log monitor."""
-from dataclasses import dataclass
-from typing import List
+from dataclasses import dataclass, field
+from typing import List, Optional
 import os
 
 
@@ -13,12 +13,22 @@ class LogSource:
 
 
 @dataclass
+class PortForwardConfig:
+    """Configuration for kubectl port-forward."""
+    enabled: bool = False
+    namespace: str = "workers"
+    service: str = "redis"
+    port: int = 6379
+
+
+@dataclass
 class MonitorConfig:
     """Monitor configuration."""
     redis_url: str
     sources: List[LogSource]
     refresh_rate: float = 0.5  # seconds
     max_lines: int = 1000  # Max lines to keep in buffer
+    port_forward: Optional[PortForwardConfig] = None
 
     @classmethod
     def default(cls) -> "MonitorConfig":
