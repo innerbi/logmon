@@ -295,10 +295,12 @@ class LogMonitor:
         width = self.console.width or 120
 
         try:
+            # Use auto_refresh=False and manually control refresh
+            # This allows freezing the screen when scrolled for text selection
             with Live(
                 self.display.render(height=height, width=width),
                 console=self.console,
-                refresh_per_second=int(1 / self.config.refresh_rate),
+                auto_refresh=False,  # Manual refresh control
                 screen=True
             ) as live:
                 while self.running:
@@ -308,7 +310,7 @@ class LogMonitor:
                     else:
                         self.display.connection_error = False
 
-                    # Poll for new logs
+                    # Poll for new logs (always, even when scrolled - buffer keeps growing)
                     self._poll_logs()
 
                     # Check keyboard
@@ -323,10 +325,6 @@ class LogMonitor:
                     is_scrolled = self.display.scroll_offset > 0
                     should_render = (not is_scrolled) or self._render_needed
 
-                    # Disable Rich's auto_refresh when scrolled to prevent screen updates
-                    # that would break text selection
-                    live.auto_refresh = not is_scrolled
-
                     if should_render:
                         height = self.console.height or 30
                         width = self.console.width or 120
@@ -337,6 +335,7 @@ class LogMonitor:
                         # Clamp scroll before render to avoid stale offsets (now in visual lines)
                         self.display.clamp_scroll(visible_lines=content_height, available_width=available_width)
                         live.update(self.display.render(height=height, width=width))
+                        live.refresh()  # Manual refresh
                         self._render_needed = False
 
                     # Small sleep
