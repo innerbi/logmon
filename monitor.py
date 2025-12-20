@@ -130,11 +130,14 @@ class LogMonitor:
         except Exception:
             pass
 
-    def _poll_logs(self):
-        """Poll Redis for new log messages."""
+    def _poll_logs(self) -> bool:
+        """Poll Redis for new log messages. Returns True if new logs received."""
+        has_new = False
         if self.subscriber:
             for line in self.subscriber.get_new_lines():
                 self.display.add_line(line)
+                has_new = True
+        return has_new
 
     def _check_keyboard(self) -> bool:
         """
@@ -311,7 +314,7 @@ class LogMonitor:
                         self.display.connection_error = False
 
                     # Poll for new logs (always, even when scrolled - buffer keeps growing)
-                    self._poll_logs()
+                    has_new_logs = self._poll_logs()
 
                     # Check keyboard
                     if not self._check_keyboard():
@@ -319,11 +322,11 @@ class LogMonitor:
                         break
 
                     # Update display:
-                    # - Always render in live mode (scroll_offset == 0)
-                    # - When scrolled, only render on user input (_render_needed)
+                    # - In live mode: only render if new logs arrived or user input
+                    # - When scrolled: only render on user input (_render_needed)
                     # This freezes the screen when scrolled, allowing text selection
                     is_scrolled = self.display.scroll_offset > 0
-                    should_render = (not is_scrolled) or self._render_needed
+                    should_render = self._render_needed or (not is_scrolled and has_new_logs)
 
                     if should_render:
                         height = self.console.height or 30
