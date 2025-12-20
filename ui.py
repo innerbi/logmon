@@ -113,8 +113,54 @@ class LogDisplay:
             self._cached_filtered = new_filtered
             self._cache_valid = True
 
-    def get_filtered_lines(self, limit: int = 50) -> List[LogLine]:
-        """Get filtered lines for display (uses cache for performance)."""
+    def _calc_visual_lines(self, line: LogLine, available_width: int, max_lines: int = 5) -> int:
+        """Calculate how many visual lines a log entry will occupy.
+
+        Accounts for both text wrapping AND newlines within the message.
+        Caps at max_lines to prevent huge logs from dominating the display.
+        Must match the truncation logic in render_logs().
+        """
+        # Prefix: [SRC] (6) + timestamp (13) + [L] (4) + logger (up to 17)
+        prefix_len = 6 + 13 + 4  # = 23 base
+        if line.logger_name:
+            prefix_len += min(len(line.logger_name), 15) + 2  # ": " after logger
+
+        # Apply same truncation as render_logs() BEFORE calculating
+        msg = line.message.rstrip('\n')
+        max_msg_chars = available_width * max_lines
+        if len(msg) > max_msg_chars:
+            msg = msg[:max_msg_chars]
+        msg_lines = msg.split('\n')
+        if len(msg_lines) > max_lines:
+            msg_lines = msg_lines[:max_lines]
+
+        total_visual = 0
+        for i, msg_part in enumerate(msg_lines):
+            if i == 0:
+                # First line includes the prefix
+                line_len = prefix_len + len(msg_part)
+            else:
+                # Subsequent lines are just the message content (no prefix)
+                line_len = len(msg_part)
+
+            # Calculate wrapped lines for this part
+            if line_len == 0:
+                total_visual += 1  # Empty line still takes 1 visual line
+            else:
+                total_visual += max(1, (line_len + available_width - 1) // available_width)
+
+            # Cap at max_lines
+            if total_visual >= max_lines:
+                return max_lines
+
+        return max(1, min(total_visual, max_lines))
+
+    def get_filtered_lines_by_visual(self, visible_height: int, available_width: int) -> List[LogLine]:
+        """Get filtered lines for display based on VISUAL lines, not log entries.
+
+        Counts from the LAST log entry upward, including only entries that
+        fit COMPLETELY. This ensures newest content is always fully visible.
+        """
         # Check cache validity and rebuild if needed
         with self._lock:
             cache_valid = self._cache_valid
@@ -126,22 +172,54 @@ class LogDisplay:
         with self._lock:
             filtered_snapshot = list(self._cached_filtered)
 
-        total = len(filtered_snapshot)
-        if total == 0:
+        if not filtered_snapshot:
             return []
 
-        # Calculate effective offset (clamped) WITHOUT modifying state
-        max_offset = max(0, total - limit)
-        effective_offset = min(self.scroll_offset, max_offset)
+        # Pre-calculate visual lines for each entry
+        visual_counts = []
+        for line in filtered_snapshot:
+            visual_counts.append(self._calc_visual_lines(line, available_width))
 
-        # Get the window of lines
-        end_idx = total - effective_offset
-        start_idx = max(0, end_idx - limit)
-        return filtered_snapshot[start_idx:end_idx]
+        total_entries = len(filtered_snapshot)
 
-    def clamp_scroll(self, visible_lines: int = 50):
-        """Clamp scroll offset to valid range. Call this before render."""
-        # Check cache validity
+        # Calculate which entry is at the "bottom" of our view
+        # scroll_offset is in visual lines from the very end
+        # Find which entry index corresponds to where we want to END
+        if self.scroll_offset == 0:
+            # Live mode: start from the last entry
+            end_entry_idx = total_entries - 1
+        else:
+            # Scrolled mode: find the entry at scroll_offset visual lines from end
+            visual_from_end = 0
+            end_entry_idx = total_entries - 1
+            for i in range(total_entries - 1, -1, -1):
+                visual_from_end += visual_counts[i]
+                if visual_from_end >= self.scroll_offset:
+                    end_entry_idx = i
+                    break
+
+        # Now count backwards from end_entry_idx, including complete entries
+        result = []
+        accumulated_visual = 0
+
+        for i in range(end_entry_idx, -1, -1):
+            v_count = visual_counts[i]
+
+            # Check if this entry fits completely
+            if accumulated_visual + v_count <= visible_height:
+                result.insert(0, filtered_snapshot[i])  # Insert at start to maintain order
+                accumulated_visual += v_count
+            else:
+                # Include one more partial entry to fill remaining space
+                # Rich will cut it, but it's better than empty space
+                if accumulated_visual < visible_height:
+                    result.insert(0, filtered_snapshot[i])
+                break
+
+        return result
+
+    def get_total_visual_lines(self, available_width: int) -> int:
+        """Get total visual lines across all filtered entries."""
         with self._lock:
             cache_valid = self._cache_valid
 
@@ -149,9 +227,17 @@ class LogDisplay:
             self._rebuild_cache()
 
         with self._lock:
-            total = len(self._cached_filtered)
+            filtered_snapshot = list(self._cached_filtered)
 
-        max_offset = max(0, total - visible_lines)
+        total = 0
+        for line in filtered_snapshot:
+            total += self._calc_visual_lines(line, available_width)
+        return total
+
+    def clamp_scroll(self, visible_lines: int = 50, available_width: int = 120):
+        """Clamp scroll offset to valid range based on visual lines. Call this before render."""
+        total_visual = self.get_total_visual_lines(available_width)
+        max_offset = max(0, total_visual - visible_lines)
         self.scroll_offset = min(self.scroll_offset, max_offset)
 
     def scroll_up(self, lines: int = 2):
@@ -219,47 +305,27 @@ class LogDisplay:
         """
         # Calculate available width (panel width - borders - padding)
         available_width = max(40, width - 4)
+        # Actual content height inside panel (subtract 2 for panel borders)
+        content_height = max(1, height - 2)
 
-        if self.scroll_offset == 0:
-            # LIVE MODE: bottom-up selection to show newest logs
-            lines = self.get_filtered_lines(limit=height * 3)  # Get more for calculation
+        # Use visual-line-aware selection for both modes
+        # scroll_offset is now in visual lines, not log entries
+        selected_lines = self.get_filtered_lines_by_visual(
+            visible_height=content_height,
+            available_width=available_width
+        )
 
-            if not lines:
-                content = Text("No logs to display. Waiting for new logs...", style="dim")
-                return Panel(content, title="[bold]Logs[/]", border_style="green")
-
-            # Select lines from the end that fit in available height
-            selected_lines = []
-            total_visual_lines = 0
-
-            for line in reversed(lines):
-                # Estimate line length: [SRC] HH:MM:SS [L] logger: message
-                prefix_len = 6 + 9 + 4  # [SRC] + timestamp + [L]
-                if line.logger_name:
-                    prefix_len += min(len(line.logger_name), 15) + 2
-
-                msg_len = len(line.message)
-                total_len = prefix_len + msg_len
-
-                # Calculate how many visual lines this log entry needs
-                visual_lines = max(1, (total_len + available_width - 1) // available_width)
-
-                if total_visual_lines + visual_lines <= height:
-                    selected_lines.insert(0, line)  # Insert at beginning to maintain order
-                    total_visual_lines += visual_lines
-                else:
-                    break  # No more space
-        else:
-            # SCROLLED MODE: show from scroll position (old behavior)
-            selected_lines = self.get_filtered_lines(limit=height)
-
-            if not selected_lines:
-                content = Text("No logs to display. Waiting for new logs...", style="dim")
-                return Panel(content, title="[bold]Logs[/]", border_style="green")
+        if not selected_lines:
+            content = Text("No logs to display. Waiting for new logs...", style="dim")
+            return Panel(content, title="[bold]Logs[/]", border_style="green")
 
         # Render selected lines
         content = Text()
-        for line in selected_lines:
+        for idx, line in enumerate(selected_lines):
+            # Add newline between entries (not after the last one)
+            if idx > 0:
+                content.append("\n")
+
             # Source tag
             source_info = self.sources.get(line.source)
             source_color = source_info.color if source_info else "white"
@@ -281,8 +347,17 @@ class LogDisplay:
                 logger_short = line.logger_name[-15:] if len(line.logger_name) > 15 else line.logger_name
                 content.append(f"{logger_short}: ", style="cyan")
 
-            # Message (full, no truncation)
-            content.append(f"{line.message}\n", style=style)
+            # Message (truncated if too long, strip trailing newlines)
+            msg = line.message.rstrip('\n')
+            # Limit to ~5 lines worth of content (matching max_lines=5 in _calc_visual_lines)
+            max_msg_chars = available_width * 5
+            if len(msg) > max_msg_chars:
+                msg = msg[:max_msg_chars] + "..."
+            # Also limit number of newlines
+            msg_lines = msg.split('\n')
+            if len(msg_lines) > 5:
+                msg = '\n'.join(msg_lines[:5]) + "..."
+            content.append(msg, style=style)
 
         return Panel(content, title="[bold]Logs[/]", border_style="green")
 
@@ -313,8 +388,8 @@ class LogDisplay:
             Layout(name="footer", size=3, minimum_size=3),
         )
 
-        # Body height: total - header(5) - footer(3) - panel borders(4) - padding
-        body_height = max(5, height - 14)
+        # Body height: total - header(5) - footer(3)
+        body_height = max(5, height - 8)
 
         layout["header"].update(self.render_header())
         layout["body"].update(self.render_logs(height=body_height, width=width))

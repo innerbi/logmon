@@ -210,8 +210,12 @@ class LogMonitor:
                     # Update display
                     height = self.console.height or 30
                     width = self.console.width or 120
-                    # Clamp scroll before render to avoid stale offsets
-                    self.display.clamp_scroll(visible_lines=height - 14)
+                    # Calculate available width for visual line calculations
+                    available_width = max(40, width - 4)
+                    # content_height = height - 8 (header+footer) - 2 (panel borders) = height - 10
+                    content_height = max(1, height - 10)
+                    # Clamp scroll before render to avoid stale offsets (now in visual lines)
+                    self.display.clamp_scroll(visible_lines=content_height, available_width=available_width)
                     live.update(self.display.render(height=height, width=width))
 
                     # Small sleep
