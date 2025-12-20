@@ -34,6 +34,7 @@ class LogMonitor:
         self.subscriber: RedisLogSubscriber = None
         self.running = False
         self._port_forward_proc = None
+        self._render_needed = True  # Flag to trigger render after user input
 
     def _try_redis_connection(self) -> bool:
         """Try to connect to Redis. Returns True if successful."""
@@ -182,12 +183,16 @@ class LogMonitor:
 
         if key == b'H':  # Up arrow
             self.display.scroll_up(scroll_lines)
+            self._render_needed = True
         elif key == b'P':  # Down arrow
             self.display.scroll_down(scroll_lines)
+            self._render_needed = True
         elif key == b'O':  # End key - jump to latest
             self.display.scroll_to_bottom()
+            self._render_needed = True
         elif key == b'G':  # Home key - jump to oldest
             self.display.scroll_up(9999)
+            self._render_needed = True
         return True
 
     def _handle_key(self, key: str) -> bool:
@@ -198,33 +203,46 @@ class LogMonitor:
             return False
         elif key_lower == 'p':
             self.display.toggle_pause()
+            self._render_needed = True
         elif key_lower == 'c':
             self.display.clear()
+            self._render_needed = True
         elif key_lower == '1':
             self.display.set_level_filter('DEBUG')
+            self._render_needed = True
         elif key_lower == '2':
             self.display.set_level_filter('INFO')
+            self._render_needed = True
         elif key_lower == '3':
             self.display.set_level_filter('WARNING')
+            self._render_needed = True
         elif key_lower == '4':
             self.display.set_level_filter('ERROR')
+            self._render_needed = True
         elif key_lower == '5':
             self.display.set_level_filter('CRITICAL')
+            self._render_needed = True
         elif key_lower == '0':
             self.display.set_level_filter(None)
+            self._render_needed = True
         elif key_lower == 'b':
             self.display.set_source_filter('backend')
+            self._render_needed = True
         elif key_lower == 'w':
             self.display.set_source_filter('batch')
+            self._render_needed = True
         elif key_lower == 'r':
             self.display.set_source_filter('ray')
+            self._render_needed = True
         elif key_lower == 'a':
             self.display.set_source_filter(None)
             self.display.set_level_filter(None)
+            self._render_needed = True
         elif key_lower == 'l':
             self._copy_logs_to_clipboard()
         elif key_lower == 'x':
             self._reconnect()
+            self._render_needed = True
 
         return True
 
@@ -298,16 +316,28 @@ class LogMonitor:
                         self.running = False
                         break
 
-                    # Update display
-                    height = self.console.height or 30
-                    width = self.console.width or 120
-                    # Calculate available width for visual line calculations
-                    available_width = max(40, width - 4)
-                    # content_height = height - 8 (header+footer) - 2 (panel borders) = height - 10
-                    content_height = max(1, height - 10)
-                    # Clamp scroll before render to avoid stale offsets (now in visual lines)
-                    self.display.clamp_scroll(visible_lines=content_height, available_width=available_width)
-                    live.update(self.display.render(height=height, width=width))
+                    # Update display:
+                    # - Always render in live mode (scroll_offset == 0)
+                    # - When scrolled, only render on user input (_render_needed)
+                    # This freezes the screen when scrolled, allowing text selection
+                    is_scrolled = self.display.scroll_offset > 0
+                    should_render = (not is_scrolled) or self._render_needed
+
+                    # Disable Rich's auto_refresh when scrolled to prevent screen updates
+                    # that would break text selection
+                    live.auto_refresh = not is_scrolled
+
+                    if should_render:
+                        height = self.console.height or 30
+                        width = self.console.width or 120
+                        # Calculate available width for visual line calculations
+                        available_width = max(40, width - 4)
+                        # content_height = height - 8 (header+footer) - 2 (panel borders) = height - 10
+                        content_height = max(1, height - 10)
+                        # Clamp scroll before render to avoid stale offsets (now in visual lines)
+                        self.display.clamp_scroll(visible_lines=content_height, available_width=available_width)
+                        live.update(self.display.render(height=height, width=width))
+                        self._render_needed = False
 
                     # Small sleep
                     time.sleep(self.config.refresh_rate)
