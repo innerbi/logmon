@@ -333,8 +333,9 @@ class LogMonitor:
                         width = self.console.width or 120
                         # Calculate available width for visual line calculations
                         available_width = max(40, width - 4)
-                        # content_height = height - 8 (header+footer) - 2 (panel borders) = height - 10
-                        content_height = max(1, height - 10)
+                        # content_height = height - 8 (header+footer) - 2 (panel borders) - 1 (safety margin)
+                        # Be conservative to avoid any overflow into header/footer
+                        content_height = max(1, height - 11)
                         # Clamp scroll before render to avoid stale offsets (now in visual lines)
                         self.display.clamp_scroll(visible_lines=content_height, available_width=available_width)
                         live.update(self.display.render(height=height, width=width))

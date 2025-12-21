@@ -5,6 +5,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.style import Style
+from rich.cells import cell_len  # For accurate width calculation with emojis/unicode
 from typing import List, Dict, Optional
 from collections import deque
 from dataclasses import dataclass, field
@@ -117,6 +118,7 @@ class LogDisplay:
         """Calculate how many visual lines a log entry will occupy.
 
         Accounts for both text wrapping AND newlines within the message.
+        Uses cell_len for accurate width with emojis/unicode (they take 2 columns).
         Caps at max_lines to prevent huge logs from dominating the display.
         Must match the truncation logic in render_logs().
         """
@@ -127,9 +129,13 @@ class LogDisplay:
 
         # Apply same truncation as render_logs() BEFORE calculating
         msg = line.message.rstrip('\n')
-        max_msg_chars = available_width * max_lines
-        if len(msg) > max_msg_chars:
-            msg = msg[:max_msg_chars]
+        max_visual_width = available_width * max_lines
+        # First, rough truncation by characters
+        if len(msg) > max_visual_width:
+            msg = msg[:max_visual_width]
+        # Then check actual visual width (cell_len accounts for emojis taking 2 columns)
+        while cell_len(msg) > max_visual_width and len(msg) > 0:
+            msg = msg[:-1]
         msg_lines = msg.split('\n')
         if len(msg_lines) > max_lines:
             msg_lines = msg_lines[:max_lines]
@@ -138,10 +144,11 @@ class LogDisplay:
         for i, msg_part in enumerate(msg_lines):
             if i == 0:
                 # First line includes the prefix
-                line_len = prefix_len + len(msg_part)
+                # Use cell_len for accurate width with emojis/unicode
+                line_len = prefix_len + cell_len(msg_part)
             else:
                 # Subsequent lines are just the message content (no prefix)
-                line_len = len(msg_part)
+                line_len = cell_len(msg_part)
 
             # Calculate wrapped lines for this part
             if line_len == 0:
@@ -198,7 +205,8 @@ class LogDisplay:
                     end_entry_idx = i
                     break
 
-        # Now count backwards from end_entry_idx, including complete entries
+        # Now count backwards from end_entry_idx, including ONLY complete entries
+        # Do NOT include partial entries - this prevents overflow into header/footer
         result = []
         accumulated_visual = 0
 
@@ -210,10 +218,7 @@ class LogDisplay:
                 result.insert(0, filtered_snapshot[i])  # Insert at start to maintain order
                 accumulated_visual += v_count
             else:
-                # Include one more partial entry to fill remaining space
-                # Rich will cut it, but it's better than empty space
-                if accumulated_visual < visible_height:
-                    result.insert(0, filtered_snapshot[i])
+                # Do NOT include partial entries - causes overflow
                 break
 
         return result
@@ -302,11 +307,16 @@ class LogDisplay:
 
         When scrolled (scroll_offset>0): shows logs from the scroll position,
         which may cut newer logs at the bottom if content overflows.
+
+        Args:
+            height: Total height available for the panel (including borders)
+            width: Total width available for the panel
         """
         # Calculate available width (panel width - borders - padding)
         available_width = max(40, width - 4)
-        # Actual content height inside panel (subtract 2 for panel borders)
-        content_height = max(1, height - 2)
+        # Actual content height inside panel (subtract 2 for panel borders + 1 safety margin)
+        # Be conservative to avoid any overflow
+        content_height = max(1, height - 3)
 
         # Use visual-line-aware selection for both modes
         # scroll_offset is now in visual lines, not log entries
@@ -317,7 +327,7 @@ class LogDisplay:
 
         if not selected_lines:
             content = Text("No logs to display. Waiting for new logs...", style="dim")
-            return Panel(content, title="[bold]Logs[/]", border_style="green")
+            return Panel(content, title="[bold]Logs[/]", border_style="green", height=height)
 
         # Render selected lines
         content = Text()
@@ -350,16 +360,24 @@ class LogDisplay:
             # Message (truncated if too long, strip trailing newlines)
             msg = line.message.rstrip('\n')
             # Limit to ~5 lines worth of content (matching max_lines=5 in _calc_visual_lines)
-            max_msg_chars = available_width * 5
-            if len(msg) > max_msg_chars:
-                msg = msg[:max_msg_chars] + "..."
+            # Use cell_len for accurate width with emojis/unicode
+            max_visual_width = available_width * 5
+            # First, rough truncation by characters
+            if len(msg) > max_visual_width:
+                msg = msg[:max_visual_width]
+            # Then check actual visual width and truncate further if needed
+            while cell_len(msg) > max_visual_width and len(msg) > 0:
+                msg = msg[:-1]
+            if len(msg) < len(line.message.rstrip('\n')):
+                msg = msg + "..."
             # Also limit number of newlines
             msg_lines = msg.split('\n')
             if len(msg_lines) > 5:
                 msg = '\n'.join(msg_lines[:5]) + "..."
             content.append(msg, style=style)
 
-        return Panel(content, title="[bold]Logs[/]", border_style="green")
+        # Use explicit height to prevent overflow into header/footer
+        return Panel(content, title="[bold]Logs[/]", border_style="green", height=height)
 
     def render_footer(self) -> Panel:
         """Render the footer with keyboard shortcuts."""
