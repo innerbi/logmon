@@ -56,6 +56,7 @@ class LogDisplay:
     stats: Dict[str, Dict[str, int]] = field(default_factory=dict)
     connection_error: bool = False
     scroll_offset: int = 0  # 0 = latest, >0 = scrolled back
+    status_message: Optional[str] = None  # Temporary status message (e.g., "Reconnecting...")
     _cache_valid: bool = False
     _cached_filtered: List = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -263,8 +264,10 @@ class LogDisplay:
         table.add_column("Label", style="bold")
         table.add_column("Value")
 
-        # Status
-        if self.connection_error:
+        # Status - show status_message if present (takes priority)
+        if self.status_message:
+            status = f"[yellow]{self.status_message}[/]"
+        elif self.connection_error:
             status = "[red]DISCONNECTED[/] [dim][[/][yellow]X[/][dim]] Reconnect[/]"
         elif self.paused:
             status = "[yellow]PAUSED[/]"

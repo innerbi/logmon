@@ -35,6 +35,7 @@ class LogMonitor:
         self.running = False
         self._port_forward_proc = None
         self._render_needed = True  # Flag to trigger render after user input
+        self._live = None  # Reference to Live display for forced refreshes
 
     def _try_redis_connection(self) -> bool:
         """Try to connect to Redis. Returns True if successful."""
@@ -101,8 +102,20 @@ class LogMonitor:
         channels = [f"logs:{s.name}" for s in self.config.sources if s.enabled]
         self.subscriber = RedisLogSubscriber(self.config.redis_url, channels)
 
+    def _force_refresh(self):
+        """Force an immediate display refresh."""
+        if self._live:
+            height = self.console.height or 30
+            width = self.console.width or 120
+            self._live.update(self.display.render(height=height, width=width))
+            self._live.refresh()
+
     def _reconnect(self):
         """Attempt to reconnect to Redis, including port-forward if needed."""
+        # Show reconnecting message
+        self.display.status_message = "Reconnecting..."
+        self._force_refresh()
+
         try:
             # Stop existing subscriber
             if self.subscriber:
@@ -113,22 +126,41 @@ class LogMonitor:
             if not self._try_redis_connection():
                 # Redis not reachable, try to restart port-forward
                 if self.config.port_forward and self.config.port_forward.enabled:
+                    self.display.status_message = "Restarting port-forward..."
+                    self._force_refresh()
                     self._cleanup_port_forward()
                     if self._start_port_forward():
                         time.sleep(1)
                         if not self._try_redis_connection():
-                            return  # Still can't connect
+                            self.display.status_message = "Connection failed - Redis unreachable"
+                            self.display.connection_error = True
+                            return
                     else:
-                        return  # Failed to start port-forward
+                        self.display.status_message = "Connection failed - port-forward error"
+                        self.display.connection_error = True
+                        return
                 else:
-                    return  # No port-forward config and Redis not reachable
+                    self.display.status_message = "Connection failed - Redis unreachable"
+                    self.display.connection_error = True
+                    return
 
             # Redis is reachable, setup subscriber
             self._setup_subscriber()
             self.subscriber.start()
             time.sleep(0.5)
-        except Exception:
-            pass
+
+            # Success
+            self.display.connection_error = False
+            self.display.status_message = "Reconnected!"
+            self._force_refresh()
+
+            # Clear message after a moment
+            time.sleep(1)
+            self.display.status_message = None
+
+        except Exception as e:
+            self.display.status_message = f"Reconnect error: {str(e)[:30]}"
+            self.display.connection_error = True
 
     def _poll_logs(self) -> bool:
         """Poll Redis for new log messages. Returns True if new logs received."""
@@ -306,6 +338,7 @@ class LogMonitor:
                 auto_refresh=False,  # Manual refresh control
                 screen=True
             ) as live:
+                self._live = live  # Store reference for forced refreshes
                 while self.running:
                     # Check if subscriber is still running
                     if not self.subscriber.is_running:
@@ -349,6 +382,7 @@ class LogMonitor:
             pass
         finally:
             self.running = False
+            self._live = None  # Clear reference
             try:
                 if self.subscriber:
                     self.subscriber.stop()
