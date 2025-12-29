@@ -234,6 +234,10 @@ class LogMonitor:
 
     def _handle_key(self, key: str) -> bool:
         """Handle a keyboard key. Returns False to quit."""
+        # Check if in search input mode
+        if self.display.filters.search_input_mode:
+            return self._handle_search_key(key)
+
         key_lower = key.lower()
 
         if key_lower == 'q':
@@ -282,6 +286,32 @@ class LogMonitor:
             self._render_needed = True
         elif key_lower == 'k':
             self._cancel_all_batch_tasks()
+            self._render_needed = True
+        elif key == '/':
+            # Start search input mode
+            self.display.start_search_input()
+            self._render_needed = True
+        elif key == '\x1b':  # Escape - clear search if active
+            if self.display.filters.search:
+                self.display.clear_search()
+                self._render_needed = True
+
+        return True
+
+    def _handle_search_key(self, key: str) -> bool:
+        """Handle keyboard input in search mode. Returns False to quit."""
+        if key == '\r' or key == '\n':  # Enter - confirm search
+            self.display.confirm_search_input()
+            self._render_needed = True
+        elif key == '\x1b':  # Escape - cancel search input
+            self.display.cancel_search_input()
+            self._render_needed = True
+        elif key == '\x08' or key == '\x7f':  # Backspace
+            self.display.backspace_search()
+            self._render_needed = True
+        elif key.isprintable() and len(key) == 1:
+            # Regular printable character
+            self.display.add_search_char(key)
             self._render_needed = True
 
         return True

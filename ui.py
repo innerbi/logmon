@@ -43,6 +43,8 @@ class FilterState:
     level: Optional[str] = None  # None = all levels
     source: Optional[str] = None  # None = all sources
     search: str = ""  # Text search filter
+    search_input_mode: bool = False  # True when user is typing search
+    search_buffer: str = ""  # Buffer for text being typed
 
 
 @dataclass
@@ -260,9 +262,10 @@ class LogDisplay:
 
     def render_header(self) -> Panel:
         """Render the header panel with status and stats."""
-        table = Table(show_header=False, box=None, padding=(0, 2))
-        table.add_column("Label", style="bold")
-        table.add_column("Value")
+        # Create left table for status/filters/stats
+        left_table = Table(show_header=False, box=None, padding=(0, 1))
+        left_table.add_column("Label", style="bold", width=8)
+        left_table.add_column("Value")
 
         # Status - show status_message if present (takes priority)
         if self.status_message:
@@ -275,18 +278,16 @@ class LogDisplay:
             status = f"[cyan]VIEW FROZEN (buffering) - Press End for latest[/]"
         else:
             status = "[green]LIVE[/]"
-        table.add_row("Status:", status)
+        left_table.add_row("Status:", status)
 
-        # Active filters
+        # Active filters (excluding search - shown in search box)
         filters = []
         if self.filters.level:
             filters.append(f"Level: {self.filters.level}")
         if self.filters.source:
             filters.append(f"Source: {self.filters.source}")
-        if self.filters.search:
-            filters.append(f"Search: '{self.filters.search}'")
         filter_text = ", ".join(filters) if filters else "None"
-        table.add_row("Filters:", filter_text)
+        left_table.add_row("Filters:", filter_text)
 
         # Stats per source
         stats_parts = []
@@ -298,9 +299,26 @@ class LogDisplay:
             else:
                 stats_parts.append(f"{source}: {total}")
         stats_text = " | ".join(stats_parts) if stats_parts else "No logs yet"
-        table.add_row("Stats:", stats_text)
+        left_table.add_row("Stats:", stats_text)
 
-        return Panel(table, title="[bold]Lumen Log Monitor[/]", border_style="blue")
+        # Create search box on the right
+        if self.filters.search_input_mode:
+            # Input mode: show cursor
+            search_display = f"[cyan]/{self.filters.search_buffer}[/][blink]_[/]"
+        elif self.filters.search:
+            # Active search filter
+            search_display = f"[green]/{self.filters.search}[/] [dim](Esc:clear)[/]"
+        else:
+            # No search - show hint
+            search_display = "[dim]/: search[/]"
+
+        # Create main layout table with left content and right search box
+        main_table = Table(show_header=False, box=None, expand=True, padding=0)
+        main_table.add_column("Left", ratio=3)
+        main_table.add_column("Search", justify="right", ratio=1, min_width=25)
+        main_table.add_row(left_table, search_display)
+
+        return Panel(main_table, title="[bold]Lumen Log Monitor[/]", border_style="blue")
 
     def render_logs(self, height: int = 30, width: int = 120) -> Panel:
         """Render the main log panel.
@@ -384,18 +402,27 @@ class LogDisplay:
 
     def render_footer(self) -> Panel:
         """Render the footer with keyboard shortcuts."""
-        shortcuts = [
-            "Arrows:Scroll",
-            "End:Latest",
-            "[P]ause",
-            "[C]lear",
-            "[L]ogs:Copy",
-            "[K]ill:Batch",
-            "[1-5]Level",
-            "[B]/[W]/[R]",
-            "[A]ll",
-            "[Q]uit"
-        ]
+        if self.filters.search_input_mode:
+            # Show search-specific shortcuts
+            shortcuts = [
+                "[/]Search mode",
+                "Enter:Apply",
+                "Esc:Cancel",
+                "Type to filter logs"
+            ]
+        else:
+            shortcuts = [
+                "Arrows:Scroll",
+                "End:Latest",
+                "[P]ause",
+                "[C]lear",
+                "[L]ogs:Copy",
+                "[K]ill:Batch",
+                "[1-5]Level",
+                "[B]/[W]/[R]",
+                "[A]ll",
+                "[Q]uit"
+            ]
         text = Text(" | ".join(shortcuts), style="dim")
         return Panel(text, border_style="dim")
 
@@ -441,3 +468,36 @@ class LogDisplay:
     def toggle_pause(self):
         """Toggle pause state."""
         self.paused = not self.paused
+
+    def start_search_input(self):
+        """Enter search input mode."""
+        self.filters.search_input_mode = True
+        self.filters.search_buffer = self.filters.search  # Start with current search
+
+    def cancel_search_input(self):
+        """Cancel search input and optionally clear search."""
+        self.filters.search_input_mode = False
+        self.filters.search_buffer = ""
+
+    def clear_search(self):
+        """Clear the search filter."""
+        self.filters.search = ""
+        self.filters.search_buffer = ""
+        self.filters.search_input_mode = False
+        self._invalidate_cache()
+
+    def confirm_search_input(self):
+        """Confirm search input and apply filter."""
+        self.filters.search = self.filters.search_buffer
+        self.filters.search_input_mode = False
+        self._invalidate_cache()
+
+    def add_search_char(self, char: str):
+        """Add a character to the search buffer."""
+        if self.filters.search_input_mode:
+            self.filters.search_buffer += char
+
+    def backspace_search(self):
+        """Remove last character from search buffer."""
+        if self.filters.search_input_mode and self.filters.search_buffer:
+            self.filters.search_buffer = self.filters.search_buffer[:-1]
