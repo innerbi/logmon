@@ -2,7 +2,9 @@
 import time
 import sys
 import subprocess
+import json
 import redis
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 from rich.console import Console
 from rich.live import Live
@@ -278,6 +280,9 @@ class LogMonitor:
         elif key_lower == 'x':
             self._reconnect()
             self._render_needed = True
+        elif key_lower == 'k':
+            self._cancel_all_batch_tasks()
+            self._render_needed = True
 
         return True
 
@@ -302,6 +307,79 @@ class LogMonitor:
             process.communicate(text.encode('utf-8'))
         except Exception:
             pass  # Silently fail if clipboard not available
+
+    def _cancel_all_batch_tasks(self):
+        """
+        Cancel all pending batch tasks by publishing to tasks:cancel channel.
+
+        Reads all pending tasks from Redis streams and sends cancel signal
+        for each unique session_id.
+        """
+        try:
+            # Create Redis client
+            parsed = urlparse(self.config.redis_url)
+            host = parsed.hostname or 'localhost'
+            if host == 'localhost':
+                host = '127.0.0.1'
+            client = redis.Redis(
+                host=host,
+                port=parsed.port or 6379,
+                db=int(parsed.path.lstrip('/') or 0),
+                decode_responses=True,
+                socket_timeout=5
+            )
+
+            # Task queue streams
+            task_types = ['embeddings', 'models', 'measures']
+            session_ids = set()
+
+            # Collect unique session_ids from all queues
+            for task_type in task_types:
+                stream_key = f"tasks:queue:{task_type}"
+                try:
+                    # Read all pending messages from stream
+                    messages = client.xrange(stream_key, '-', '+', count=1000)
+                    for msg_id, data in messages:
+                        if 'payload' in data:
+                            try:
+                                payload = json.loads(data['payload'])
+                                if 'session_id' in payload:
+                                    session_ids.add(payload['session_id'])
+                            except (json.JSONDecodeError, KeyError):
+                                pass
+                except redis.ResponseError:
+                    # Stream doesn't exist
+                    pass
+
+            if not session_ids:
+                self.display.status_message = "No pending tasks found"
+                self._force_refresh()
+                time.sleep(1)
+                self.display.status_message = None
+                return
+
+            # Publish cancel message for each session
+            cancel_channel = "tasks:cancel"
+            cancelled_count = 0
+            for session_id in session_ids:
+                message = json.dumps({
+                    "session_id": session_id,
+                    "cancelled_at": datetime.now(timezone.utc).isoformat()
+                })
+                subscribers = client.publish(cancel_channel, message)
+                if subscribers > 0:
+                    cancelled_count += 1
+
+            self.display.status_message = f"Cancelled {cancelled_count} sessions ({len(session_ids)} unique)"
+            self._force_refresh()
+            time.sleep(2)
+            self.display.status_message = None
+
+        except Exception as e:
+            self.display.status_message = f"Cancel failed: {str(e)[:30]}"
+            self._force_refresh()
+            time.sleep(2)
+            self.display.status_message = None
 
     def run(self):
         """Run the monitor (blocking)."""

@@ -390,8 +390,9 @@ class LogDisplay:
             "[P]ause",
             "[C]lear",
             "[L]ogs:Copy",
+            "[K]ill:Batch",
             "[1-5]Level",
-            "[B]ack/[W]ork/[R]ay",
+            "[B]/[W]/[R]",
             "[A]ll",
             "[Q]uit"
         ]
