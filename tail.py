@@ -1,4 +1,12 @@
-"""Redis pub/sub log subscriber."""
+"""
+Redis pub/sub log subscriber.
+
+Classes:
+- LogLine: A parsed log line.
+- RedisLogSubscriber: Subscribes to Redis pub/sub channels for log streaming.
+"""
+
+
 import json
 import threading
 from typing import Callable, List, Optional

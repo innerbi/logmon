@@ -1,4 +1,13 @@
-"""Configuration for log monitor."""
+"""
+Configuration for log monitor.
+
+Classes:
+- LogSource: A log source to monitor.
+- PortForwardConfig: Configuration for kubectl port-forward.
+- MonitorConfig: Monitor configuration.
+"""
+
+
 from dataclasses import dataclass, field
 from typing import List, Optional
 import os

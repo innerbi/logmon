@@ -1,4 +1,11 @@
-"""Main monitor class that coordinates Redis subscription and display."""
+"""
+Main monitor class that coordinates Redis subscription and display.
+
+Classes:
+- LogMonitor: Main log monitor application.
+"""
+
+
 import time
 import sys
 import subprocess

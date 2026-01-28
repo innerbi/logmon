@@ -1,4 +1,12 @@
-"""Rich TUI components for log monitor."""
+"""
+Rich TUI components for log monitor.
+
+Classes:
+- FilterState: Current filter state.
+- LogDisplay: Manages the log display buffer and rendering.
+"""
+
+
 from rich.console import Group
 from rich.layout import Layout
 from rich.panel import Panel
