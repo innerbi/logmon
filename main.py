@@ -8,7 +8,7 @@ Usage:
 Options:
     python main.py --backend-only
     python main.py --batch-only
-    python main.py --redis-url rediss://:KEY@host:6380/0
+    python main.py --local
 """
 import argparse
 import os
@@ -53,15 +53,8 @@ Requirements:
 
     parser.add_argument(
         "--redis-url", "-r",
-        default=None,
-        help="Redis URL. Resolution order: this flag, REDIS_URL env, Azure Key Vault "
-             "redis-url secret (--vault), then redis://localhost:6379/0"
-    )
-    parser.add_argument(
-        "--vault",
-        default=os.getenv("LOGMON_VAULT", "kv-lumen-prod-31x8"),
-        help="Azure Key Vault name to fetch the `redis-url` secret from when no URL is "
-             "supplied (default: kv-lumen-prod-31x8). Set LOGMON_VAULT env to override."
+        default=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+        help="Redis URL (default: REDIS_URL env or redis://localhost:6379/0)"
     )
     parser.add_argument(
         "--backend-only", "-b",
@@ -90,28 +83,18 @@ Requirements:
         action="store_true",
         help="Wait for keypress before starting (default: start immediately)"
     )
-    # AKS port-forward removed: stack runs on Container Apps now and Redis is Azure Cache
-    # for Redis (managed, directly reachable over rediss://). For local dev, point at
-    # localhost via --redis-url or REDIS_URL env.
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Use local Redis instead of AKS (default: AKS via port-forward)"
+    )
+    parser.add_argument(
+        "--namespace", "-n",
+        default="workers",
+        help="Kubernetes namespace for port-forward (default: workers)"
+    )
 
     args = parser.parse_args()
-
-    # Resolve Redis URL: explicit flag > REDIS_URL env > Key Vault > local fallback
-    if not args.redis_url:
-        args.redis_url = os.getenv("REDIS_URL")
-    if not args.redis_url and args.vault:
-        try:
-            import subprocess
-            args.redis_url = subprocess.check_output(
-                ["az", "keyvault", "secret", "show",
-                 "--vault-name", args.vault, "--name", "redis-url",
-                 "--query", "value", "-o", "tsv"],
-                text=True, stderr=subprocess.DEVNULL, timeout=15,
-            ).strip()
-        except Exception as e:
-            print(f"[warn] could not fetch redis-url from vault '{args.vault}': {e}")
-    if not args.redis_url:
-        args.redis_url = "redis://localhost:6379/0"
 
     # Build sources list
     sources = []
@@ -130,12 +113,10 @@ Requirements:
     print("=" * 50)
     print("  Lumen Log Monitor (Redis pub/sub)")
     print("=" * 50)
-    # Redact password in the display URL
-    import re
-    display_url = re.sub(r"//[^:]*:[^@]+@", "//<user>:<pw>@", args.redis_url)
-    print(f"  Redis: {display_url}")
+    print(f"  Redis: {args.redis_url}")
     print(f"  Channels: {', '.join(f'logs:{s.name}' for s in sources)}")
     print(f"  Refresh: {args.refresh_rate}s")
+    print(f"  Mode: {'Local' if args.local else 'AKS (auto port-forward)'}")
     print()
     print("  Make sure services are running with LOG_TO_REDIS=1")
     print()
@@ -151,8 +132,15 @@ Requirements:
     else:
         print("=" * 50)
 
-    # AKS port-forward removed; logmon connects directly to args.redis_url.
+    # Configure port-forward (only if not local mode)
     port_forward = None
+    if not args.local:
+        port_forward = PortForwardConfig(
+            enabled=True,
+            namespace=args.namespace,
+            service="redis",
+            port=6379
+        )
 
     # Create config
     config = MonitorConfig(

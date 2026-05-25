@@ -77,25 +77,18 @@ class RedisLogSubscriber:
         from urllib.parse import urlparse
 
         try:
-            # `from_url` handles rediss:// (TLS), passwords, and URL-encoded credentials —
-            # required for Azure Cache for Redis Standard. The old manual urlparse path
-            # dropped password and ssl, breaking auth against managed Redis.
             parsed = urlparse(self.redis_url)
-            if (parsed.hostname or 'localhost') == 'localhost':
-                # Force IPv4 only for local dev; port-forward doesn't bind v6
-                client = redis.Redis(
-                    host='127.0.0.1',
-                    port=parsed.port or 6379,
-                    db=int(parsed.path.lstrip('/') or 0),
-                    decode_responses=True,
-                    protocol=2,
-                )
-            else:
-                client = redis.from_url(
-                    self.redis_url,
-                    decode_responses=True,
-                    protocol=2,
-                )
+            # Force IPv4 - 'localhost' may resolve to IPv6 which port-forward doesn't support
+            host = parsed.hostname or 'localhost'
+            if host == 'localhost':
+                host = '127.0.0.1'
+            client = redis.Redis(
+                host=host,
+                port=parsed.port or 6379,
+                db=int(parsed.path.lstrip('/') or 0),
+                decode_responses=True,
+                protocol=2
+            )
             self._pubsub = client.pubsub()
             self._pubsub.subscribe(*self.channels)
 

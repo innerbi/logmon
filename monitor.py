@@ -52,24 +52,15 @@ class LogMonitor:
             parsed = urlparse(self.config.redis_url)
             host = parsed.hostname or 'localhost'
             if host == 'localhost':
-                # Local dev / port-forward — force IPv4
-                client = redis.Redis(
-                    host='127.0.0.1',
-                    port=parsed.port or 6379,
-                    db=int(parsed.path.lstrip('/') or 0),
-                    decode_responses=True,
-                    protocol=2,
-                    socket_timeout=3,
-                )
-            else:
-                # Managed Redis (Azure Cache for Redis, etc.) — use from_url so password
-                # and ssl (rediss://) are parsed correctly.
-                client = redis.from_url(
-                    self.config.redis_url,
-                    decode_responses=True,
-                    protocol=2,
-                    socket_timeout=3,
-                )
+                host = '127.0.0.1'
+            client = redis.Redis(
+                host=host,
+                port=parsed.port or 6379,
+                db=int(parsed.path.lstrip('/') or 0),
+                decode_responses=True,
+                protocol=2,
+                socket_timeout=3
+            )
             client.ping()
             return True
         except Exception:
@@ -362,22 +353,18 @@ class LogMonitor:
         to cancel their current tasks.
         """
         try:
-            # Create Redis client (handles localhost dev + managed Azure Redis via rediss://)
+            # Create Redis client
             parsed = urlparse(self.config.redis_url)
-            if (parsed.hostname or 'localhost') == 'localhost':
-                client = redis.Redis(
-                    host='127.0.0.1',
-                    port=parsed.port or 6379,
-                    db=int(parsed.path.lstrip('/') or 0),
-                    decode_responses=True,
-                    socket_timeout=5,
-                )
-            else:
-                client = redis.from_url(
-                    self.config.redis_url,
-                    decode_responses=True,
-                    socket_timeout=5,
-                )
+            host = parsed.hostname or 'localhost'
+            if host == 'localhost':
+                host = '127.0.0.1'
+            client = redis.Redis(
+                host=host,
+                port=parsed.port or 6379,
+                db=int(parsed.path.lstrip('/') or 0),
+                decode_responses=True,
+                socket_timeout=5
+            )
 
             # Publish cancel ALL message (session_id="*" means cancel all)
             cancel_channel = "tasks:cancel"
